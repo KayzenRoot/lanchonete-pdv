@@ -1,0 +1,176 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("ATTENDANT")
+  active    Boolean  @default(true)
+  orders    Order[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// Product categories
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  color       String?
+  active      Boolean   @default(true)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("categories")
+}
+
+// Products available for sale
+model Product {
+  id          String      @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal
+  imageUrl    String?
+  categoryId  String
+  category    Category    @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
+  isAvailable Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("products")
+}
+
+// Customer orders
+model Order {
+  id            String      @id @default(uuid())
+  orderNumber   Int         @unique
+  status        String      @default("PENDING")
+  items         OrderItem[]
+  total         Decimal
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  customerName  String?
+  paymentMethod String
+  comments      Comment[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+// Order items linking products to orders
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Decimal
+  subtotal  Decimal
+  note      String?
+
+  @@map("order_items")
+}
+
+// Comments for orders
+model Comment {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  content   String
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("comments")
+  @@index([orderId])
+}
+
+// Store settings and configurations
+model StoreSettings {
+  id                String   @id @default(uuid())
+  storeName         String   @default("Minha Lanchonete")
+  storePhone        String   @default("(00) 00000-0000")
+  storeAddress      String   @default("Rua Exemplo, 123")
+  storeLogo         String?
+  receiptHeader     String   @default("Obrigado pela preferência!")
+  receiptFooter     String   @default("Volte sempre!")
+  primaryColor      String   @default("#E11D48")
+  secondaryColor    String   @default("#2563EB")
+  taxPercentage     Float    @default(0)
+  currencySymbol    String   @default("R$")
+  allowDecimal      Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("store_settings")
+}
+
+// Business hours configuration
+model BusinessHours {
+  id          String   @id @default(uuid())
+  dayOfWeek   Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  isOpen      Boolean  @default(true)
+  openTime    String   @default("08:00") // Format: HH:MM in 24-hour format
+  closeTime   String   @default("18:00") // Format: HH:MM in 24-hour format
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("business_hours")
+}
+
+// Printer settings
+model PrinterSettings {
+  id          String    @id @default(uuid())
+  name        String
+  model       String?
+  connection  String    @default("USB") // USB, NETWORK, BLUETOOTH
+  ipAddress   String?
+  port        Int?      @default(9100)
+  isDefault   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("printer_settings")
+}
+
+// General system settings
+model GeneralSettings {
+  id                  String   @id @default(uuid())
+  language            String   @default("pt-BR")
+  theme               String   @default("light") // light, dark, system
+  currencyFormat      String   @default("#,##0.00")
+  dateFormat          String   @default("DD/MM/YYYY")
+  timeFormat          String   @default("HH:mm")
+  autoLogoutMinutes   Int      @default(30)
+  lowStockThreshold   Int      @default(10)
+  enableLowStockAlert Boolean  @default(true)
+  defaultOrderStatus  String   @default("PENDING")
+  allowStockManagement Boolean  @default(true)
+  orderNumberPrefix   String   @default("PED")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("general_settings")
+}

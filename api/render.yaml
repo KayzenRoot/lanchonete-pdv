@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: lanchonete-pdv-api
+    env: node
+    buildCommand: npm install && npx prisma migrate deploy && npx prisma generate && npm run build
+    startCommand: node dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        value: n3K%W5^vZ8!qLp2@rT6#yE9*xD1&cG7$jA4
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: CORS_ORIGIN
+        value: https://lanchonete-pdv.vercel.app
+      - key: DATABASE_URL
+        sync: false
+    disk:
+      name: sqlite-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    healthCheckPath: /api/health 
