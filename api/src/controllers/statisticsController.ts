@@ -30,7 +30,7 @@ export async function getOrdersByDateRange(
     const orders = await prisma.order.findMany({
       where: whereClause,
       include: {
-        orderItems: {
+        items: {
           include: {
             product: true
           }
@@ -59,7 +59,7 @@ export async function getTopProducts(
     const orders = await getOrdersByDateRange(startDate, endDate);
     
     // Extract all order items
-    const allOrderItems = orders.flatMap(order => order.orderItems);
+    const allOrderItems = orders.flatMap(order => order.items);
     
     // Group by product and sum quantities
     const productMap = new Map();

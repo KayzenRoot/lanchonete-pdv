@@ -43,18 +43,23 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
     const token = parts[1];
     
     // Verify token
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-      if (err) {
-        if (err.name === 'TokenExpiredError') {
-          throw new AppError('Token expirado', 401);
+    jwt.verify(
+      token,
+      JWT_SECRET,
+      (err: jwt.VerifyErrors | null, decoded: any) => {
+        if (err) {
+          console.error('JWT verification error:', err);
+          if (err.name === 'TokenExpiredError') {
+            throw new AppError('Token expirado', 401);
+          }
+          throw new AppError('Token inválido', 401);
         }
-        throw new AppError('Token inválido', 401);
+        
+        // Add user info to request
+        req.user = decoded as Express.Request['user'];
+        next();
       }
-      
-      // Add user info to request
-      req.user = decoded as Express.Request['user'];
-      next();
-    });
+    );
   } catch (error) {
     next(error);
   }
@@ -101,12 +106,19 @@ export const optionalAuth = (req: Request, res: Response, next: NextFunction) =>
     
     const token = parts[1];
     
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-      if (!err) {
+    jwt.verify(
+      token,
+      JWT_SECRET,
+      (err: jwt.VerifyErrors | null, decoded: any) => {
+        if (err) {
+          console.error('JWT verification error (admin):', err);
+          return next();
+        }
+        
         req.user = decoded as Express.Request['user'];
+        next();
       }
-      next();
-    });
+    );
   } catch (error) {
     next();
   }

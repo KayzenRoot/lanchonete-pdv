@@ -5,10 +5,12 @@ import express from 'express';
 import prisma from '../utils/prisma';
 import chalk from 'chalk';
 import { Decimal } from '@prisma/client/runtime/library';
-import { checkAdmin } from '../middleware/authMiddleware';
+import { checkAdmin } from '../middleware/auth';
 import { calculateTrend } from '../utils/statistics';
+import { Router } from 'express';
+import { getStatistics } from '../controllers/statisticsController';
 
-const router = express.Router();
+const router = Router();
 
 /**
  * Utility function to safely convert Decimal to Number
@@ -28,6 +30,9 @@ function toNumber(value: any): number {
   
   return Number(value) || 0;
 }
+
+// Middleware para garantir que apenas admins acessem
+router.use(authenticateToken, checkAdmin);
 
 /**
  * @swagger
