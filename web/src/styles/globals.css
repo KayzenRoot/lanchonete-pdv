@@ -1,0 +1,230 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 142.1 76.2% 36.3%;
+    --primary-foreground: 355.7 100% 97.3%;
+    --primary-rgb: 46, 204, 113;
+
+    --secondary: 142.1 76.2% 36.3%;
+    --secondary-foreground: 355.7 100% 97.3%;
+
+    --muted: 146 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 142.4 70.6% 45.3%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 142.1 76.2% 36.3%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 142.1 76.2% 36.3%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 200 95% 14%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+
+    /* Cores para gráficos em array */
+    --chart-colors-array: 'rgba(46, 204, 113, 0.8)', 'rgba(52, 152, 219, 0.8)', 
+                         'rgba(155, 89, 182, 0.8)', 'rgba(241, 196, 15, 0.8)', 
+                         'rgba(230, 126, 34, 0.8)';
+
+    /* Tremor cores - light mode */
+    --tremor-brand: 214.3 100% 48.2%;
+    --tremor-brand-emphasis: 225 95% 35%;
+    --tremor-brand-inverted: 0 0% 100%;
+    --tremor-brand-muted: 214.3 100% 48.2% / 30%;
+    --tremor-brand-subtle: 214.3 100% 48.2% / 20%;
+    --tremor-brand-faint: 214.3 100% 48.2% / 5%;
+
+    --tremor-background: 0 0% 100%;
+    --tremor-background-subtle: 210 38% 95%;
+    --tremor-background-muted: 210 38% 92%;
+    --tremor-background-emphasis: 210 38% 85%;
+
+    --tremor-border: 215.7 31.8% 91.4%;
+    --tremor-ring: 215 20.2% 65.1%;
+
+    --tremor-content: 215.3 26.5% 24.7%;
+    --tremor-content-emphasis: 217.2 32.6% 17.5%;
+    --tremor-content-strong: 221.2 39.3% 11%;
+    --tremor-content-subtle: 215 19.3% 34.5%;
+    --tremor-content-inverted: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 20 14.3% 4.1%;
+    --foreground: 0 0% 95%;
+
+    --card: 24 9.8% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 142.1 70.6% 45.3%;
+    --primary-foreground: 144.9 80.4% 10%;
+    --primary-rgb: 46, 204, 113;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 85.7% 97.3%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 142.4 70.6% 45.3%;
+    
+    --chart-1: 142.4 70.6% 45.3%;
+    --chart-2: 173 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+
+    /* Cores para gráficos em array (modo escuro) */
+    --chart-colors-array: 'rgba(46, 204, 113, 0.9)', 'rgba(52, 152, 219, 0.9)', 
+                         'rgba(155, 89, 182, 0.9)', 'rgba(241, 196, 15, 0.9)', 
+                         'rgba(230, 126, 34, 0.9)';
+
+    /* Tremor cores - dark mode */
+    --tremor-brand: 214.3 100% 48.2%;
+    --tremor-brand-emphasis: 214.3 100% 65%;
+    --tremor-brand-inverted: 217.2 32.6% 17.5%;
+    --tremor-brand-muted: 214.3 100% 48.2% / 40%;
+    --tremor-brand-subtle: 214.3 100% 48.2% / 30%;
+    --tremor-brand-faint: 214.3 100% 48.2% / 10%;
+
+    --tremor-background: 221.2 39.3% 11%;
+    --tremor-background-subtle: 222.2 84% 6.5%;
+    --tremor-background-muted: 217.2 32.6% 17.5%;
+    --tremor-background-emphasis: 220.9 39.3% 20%;
+
+    --tremor-border: 217.2 32.6% 17.5%;
+    --tremor-ring: 215 20.2% 65.1%;
+
+    --tremor-content: 213 31% 80%;
+    --tremor-content-emphasis: 210 20% 85%;
+    --tremor-content-strong: 0 0% 95%;
+    --tremor-content-subtle: 215 20.2% 65.1%;
+    --tremor-content-inverted: 220 13% 12%;
+  }
+
+  /* Altera as cores para enfatizar emerald em vez do azul padrão do Tremor no tema escuro */
+  .tremor-theme-dark, .dark {
+    --tremor-brand: 142.1 70.6% 45.3%;
+    --tremor-brand-emphasis: 142.1 76.2% 55%;
+    --tremor-brand-muted: 142.1 70.6% 45.3% / 40%;
+    --tremor-brand-subtle: 142.1 70.6% 45.3% / 30%;
+    --tremor-brand-faint: 142.1 70.6% 45.3% / 10%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Estilos adicionais para gráficos */
+  .chart-container {
+    position: relative;
+    min-height: 300px;
+    margin: 0 auto;
+  }
+
+  .chart-container canvas {
+    max-width: 100%;
+    height: auto !important;
+  }
+
+  /* Garantir que os rótulos de gráficos sejam visíveis em ambos os temas */
+  .chart-container .recharts-cartesian-axis-tick-value {
+    @apply text-muted-foreground;
+  }
+
+  /* Ajustes para gráficos em modo escuro */
+  .dark .chart-container {
+    color-scheme: dark;
+  }
+
+  .dark .chart-container canvas {
+    filter: brightness(1.05);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-primary text-primary-foreground font-medium rounded-md px-4 py-2 
+           hover:shadow-card-hover transition-all duration-300;
+  }
+  
+  .card-gradient {
+    @apply bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300
+           border border-gray-100 overflow-hidden;
+  }
+  
+  .card-header-gradient {
+    @apply bg-gradient-primary text-white p-4 rounded-t-xl;
+  }
+  
+  .stat-card {
+    @apply bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300
+           border border-gray-100 overflow-hidden p-4 hover:scale-[1.02];
+  }
+  
+  .nav-item {
+    @apply flex items-center space-x-2 text-sm py-3 px-3 rounded-md 
+           hover:bg-gradient-primary hover:text-white transition-all duration-300;
+  }
+  
+  .nav-item.active {
+    @apply bg-gradient-primary text-white;
+  }
+
+  /* Componentes para gráficos */
+  .chart-wrapper {
+    @apply p-4 rounded-lg bg-card shadow-sm border border-border;
+  }
+
+  .chart-title {
+    @apply text-lg font-medium mb-4 text-card-foreground;
+  }
+
+  .chart-legend {
+    @apply flex flex-wrap gap-3 mt-4 text-sm;
+  }
+
+  .chart-legend-item {
+    @apply flex items-center gap-2;
+  }
+
+  .chart-legend-color {
+    @apply w-3 h-3 rounded-sm;
+  }
+} 

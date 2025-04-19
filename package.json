@@ -1,0 +1,33 @@
+{
+  "name": "lanchonete-pdv-monorepo",
+  "version": "1.0.0",
+  "description": "Sistema completo de PDV para lanchonetes",
+  "scripts": {
+    "install:all": "npm run install:api && npm run install:web",
+    "install:api": "cd api && npm install",
+    "install:web": "cd web && npm install",
+    "dev:api": "cd api && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "build:api": "cd api && npm run build",
+    "build:web": "cd web && npm run build",
+    "build": "npm run build:api && npm run build:web",
+    "deploy:api": "cd api && git add . && git commit -m \"Deploy API\" && git push",
+    "deploy:web": "cd web && npm run deploy",
+    "deploy": "npm run deploy:api && npm run deploy:web",
+    "reset-db": "cd api && npm run reset-all"
+  },
+  "keywords": [
+    "pdv",
+    "lanchonete",
+    "react",
+    "node",
+    "express",
+    "prisma"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+} 
