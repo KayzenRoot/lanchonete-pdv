@@ -1,10 +1,16 @@
 /**
  * Comment routes for the PDV API
  */
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma';
+import { authenticate, authorize } from '../middleware/auth';
+import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 
-const router = express.Router();
+const router = Router();
+
+// Middleware to ensure user is authenticated
+router.use(authenticate);
 
 /**
  * @swagger
@@ -81,7 +87,6 @@ router.get('/', async (req, res) => {
     
     res.json(comments);
   } catch (error) {
-    console.error('Error fetching comments:', error);
     res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
@@ -123,8 +128,39 @@ router.get('/:id', async (req, res) => {
     
     res.json(comment);
   } catch (error) {
-    console.error('Error fetching comment:', error);
     res.status(500).json({ error: 'Failed to fetch comment' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/comments/order/{orderId}:
+ *   get:
+ *     summary: Get comments for a specific order
+ *     tags: [Comments]
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the order
+ *     responses:
+ *       200:
+ *         description: List of comments
+ *       404:
+ *         description: Order not found
+ */
+router.get('/order/:orderId', async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const comments = await prisma.comment.findMany({
+      where: { orderId },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(comments);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
 
@@ -140,61 +176,41 @@ router.get('/:id', async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - orderId
- *               - content
- *               - createdBy
  *             properties:
  *               orderId:
  *                 type: string
  *               content:
  *                 type: string
- *               createdBy:
- *                 type: string
+ *             required:
+ *               - orderId
+ *               - content
  *     responses:
  *       201:
- *         description: The created comment
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Comment'
+ *         description: Comment created successfully
  *       400:
- *         description: Invalid request data
- *       404:
- *         description: Order not found
+ *         description: Invalid input
  */
-router.post('/', async (req, res) => {
+router.post('/', async (req: Request, res: Response) => {
   try {
-    const { orderId, content, createdBy } = req.body;
-    
-    // Validate required fields
-    if (!orderId || !content || !createdBy) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: orderId, content, and createdBy are required' 
-      });
+    const { orderId, content } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
     }
-    
-    // Check if order exists
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-    });
-    
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
+    if (!orderId || !content) {
+      return res.status(400).json({ error: 'Order ID and content are required' });
     }
-    
-    // Create comment
-    const comment = await prisma.comment.create({
+
+    const newComment = await prisma.comment.create({
       data: {
         orderId,
         content,
-        createdBy,
+        createdBy: userId,
       },
     });
-    
-    res.status(201).json(comment);
+    res.status(201).json(newComment);
   } catch (error) {
-    console.error('Error creating comment:', error);
     res.status(500).json({ error: 'Failed to create comment' });
   }
 });
@@ -208,10 +224,10 @@ router.post('/', async (req, res) => {
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The comment ID
+ *         description: ID of the comment
  *     requestBody:
  *       required: true
  *       content:
@@ -221,49 +237,37 @@ router.post('/', async (req, res) => {
  *             properties:
  *               content:
  *                 type: string
+ *             required:
+ *               - content
  *     responses:
  *       200:
- *         description: The updated comment
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Comment'
- *       400:
- *         description: Invalid request data
+ *         description: Comment updated successfully
+ *       403:
+ *         description: Not authorized to update this comment
  *       404:
  *         description: Comment not found
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { content } = req.body;
-    
-    // Validate required fields
-    if (!content) {
-      return res.status(400).json({ error: 'Content is required' });
-    }
-    
-    // Check if comment exists
-    const existingComment = await prisma.comment.findUnique({
-      where: { id },
-    });
-    
-    if (!existingComment) {
+    const userId = req.user?.id;
+
+    const comment = await prisma.comment.findUnique({ where: { id } });
+
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found' });
     }
-    
-    // Update comment
+    if (comment.createdBy !== userId && req.user?.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Not authorized to update this comment' });
+    }
+
     const updatedComment = await prisma.comment.update({
       where: { id },
-      data: { 
-        content,
-        updatedAt: new Date(),
-      },
+      data: { content },
     });
-    
     res.json(updatedComment);
   } catch (error) {
-    console.error('Error updating comment:', error);
     res.status(500).json({ error: 'Failed to update comment' });
   }
 });
@@ -277,38 +281,59 @@ router.put('/:id', async (req, res) => {
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The comment ID
+ *         description: ID of the comment
  *     responses:
  *       200:
  *         description: Comment deleted successfully
+ *       403:
+ *         description: Not authorized to delete this comment
  *       404:
  *         description: Comment not found
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
-    // Check if comment exists
-    const existingComment = await prisma.comment.findUnique({
-      where: { id },
-    });
-    
-    if (!existingComment) {
+    const userId = req.user?.id;
+
+    const comment = await prisma.comment.findUnique({ where: { id } });
+
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found' });
     }
-    
-    // Delete comment
-    await prisma.comment.delete({
-      where: { id },
-    });
-    
+    if (comment.createdBy !== userId && req.user?.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Not authorized to delete this comment' });
+    }
+
+    await prisma.comment.delete({ where: { id } });
     res.json({ message: 'Comment deleted successfully' });
   } catch (error) {
-    console.error('Error deleting comment:', error);
     res.status(500).json({ error: 'Failed to delete comment' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/comments/admin/all:
+ *   get:
+ *     summary: Get all comments (Admin only)
+ *     tags: [Comments, Admin]
+ *     responses:
+ *       200:
+ *         description: List of all comments
+ *       403:
+ *         description: Admin access required
+ */
+router.get('/admin/all', authorize(['ADMIN']), async (req: Request, res: Response) => {
+  try {
+    const comments = await prisma.comment.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(comments);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch all comments' });
   }
 });
 

@@ -8,10 +8,73 @@ export interface AppErrorData extends Error {
 }
 
 /**
+ * Custom Error class with status code
+ */
+export class AppError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = this.constructor.name;
+    // Maintains proper stack trace for where our error was thrown (only available on V8)
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
+  }
+}
+
+/**
+ * Global error handling middleware
+ */
+export const errorHandler = (
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  let statusCode = 500;
+  let message = 'Internal Server Error';
+
+  if (err instanceof AppError) {
+    statusCode = err.statusCode;
+    message = err.message;
+  } else if (err.name === 'ValidationError') { // Example for handling validation errors
+    statusCode = 400;
+    message = err.message;
+  } else if (err.name === 'CastError') { // Example for MongoDB CastError
+    statusCode = 400;
+    message = 'Invalid ID format';
+  } else if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+    statusCode = 401;
+    message = 'Invalid or expired token';
+  }
+
+  // Log the error internally for debugging, especially in development
+  // if (process.env.NODE_ENV !== 'production') {
+     // console.error('[ERROR HANDLER]:', err); // Uncomment for dev debugging
+  // }
+
+  res.status(statusCode).json({
+    error: message,
+    // Optionally include stack trace in development
+    stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+  });
+};
+
+/**
+ * 404 Not Found handler middleware
+ */
+export const notFoundHandler = (req: Request, res: Response, next: NextFunction) => {
+  const error = new AppError(`Not Found - ${req.originalUrl}`, 404);
+  next(error);
+};
+
+/**
  * Global error handler middleware
  * Provides standardized error responses in production and development environments
  */
-export const errorHandler = (
+export const errorHandlerOld = (
   err: AppErrorData,
   req: Request,
   res: Response,
@@ -70,7 +133,7 @@ export const errorHandler = (
  * Not found handler middleware
  * Handles requests to undefined routes
  */
-export const notFoundHandler = (
+export const notFoundHandlerOld = (
   req: Request,
   res: Response
 ) => {
@@ -85,7 +148,7 @@ export const notFoundHandler = (
 /**
  * Custom error class for application errors
  */
-export class AppError extends Error {
+export class AppErrorOld extends Error {
   statusCode: number;
   
   constructor(message: string, statusCode: number = 400) {

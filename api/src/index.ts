@@ -1,7 +1,7 @@
 /**
  * Main application file for the PDV API
  */
-import express from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import swaggerJsdoc from 'swagger-jsdoc';
@@ -34,7 +34,7 @@ import settingsRoutes from './routes/settingsRoutes';
 // Load environment variables
 dotenv.config();
 
-const app = express();
+const app: Express = express();
 const port = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -57,18 +57,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Middleware para logar todas as requisições
-app.use((req, res, next) => {
-  const start = Date.now();
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  console.log('Headers:', req.headers);
-  console.log('Body:', req.body);
-  
-  // Função para logar quando a resposta for enviada
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
-  });
-  
+app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
@@ -79,16 +68,9 @@ if (isProduction) {
   app.use(morgan('dev'));
   
   // Detailed logging middleware for development only
-  app.use((req, res, next) => {
-    console.log(chalk.blue(`[${new Date().toISOString()}] ${req.method} ${req.url}`));
-    console.log(chalk.gray('Request Headers:'), req.headers);
-    console.log(chalk.gray('Request Body:'), req.body);
-    
-    // Capture and log the response
+  app.use((req: Request, res: Response, next: NextFunction) => {
     const originalSend = res.send;
     res.send = function(body) {
-      console.log(chalk.green(`[${new Date().toISOString()}] Response Status: ${res.statusCode}`));
-      console.log(chalk.gray('Response Body:'), body);
       return originalSend.call(this, body);
     };
     
@@ -134,23 +116,20 @@ app.use('/api/settings', settingsRoutes);
 
 // Configuração da rota de autenticação separada
 // Isso permite que login e registro funcionem sem conflitar com as operações CRUD
-console.log('Configurando rotas de autenticação');
-app.post('/api/auth/login', (req, res, next) => {
+app.post('/api/auth/login', (req: Request, res: Response, next: NextFunction) => {
   // Redirecionar para a rota de login no userRoutes
-  return userRoutes.stack
-    .find(layer => layer.route?.path === '/login')
+  (userRoutes.stack.find(layer => layer.route?.path === '/login') as any)
     ?.handle(req, res, next);
 });
 
-app.post('/api/auth/register', (req, res, next) => {
+app.post('/api/auth/register', (req: Request, res: Response, next: NextFunction) => {
   // Redirecionar para a rota de registro no userRoutes
-  return userRoutes.stack
-    .find(layer => layer.route?.path === '/register')
+  (userRoutes.stack.find(layer => layer.route?.path === '/register') as any)
     ?.handle(req, res, next);
 });
 
 // Health check
-app.get('/health', async (req, res) => {
+app.get('/health', async (req: Request, res: Response) => {
   try {
     // Verificar conexão com o banco de dados
     const dbConnected = await testDatabaseConnection();
@@ -163,7 +142,6 @@ app.get('/health', async (req, res) => {
       uptime: process.uptime()
     });
   } catch (error) {
-    console.error('Erro no health check:', error);
     res.status(500).json({
       status: 'error',
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -173,7 +151,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Endpoint simplificado para verificação do frontend
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', async (req: Request, res: Response) => {
   res.status(200).json({ 
     status: 'ok',
     message: 'API is running',
@@ -182,7 +160,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Endpoint simplificado para verificação de estatísticas
-app.get('/api/statistics/health', async (req, res) => {
+app.get('/api/statistics/health', async (req: Request, res: Response) => {
   try {
     // Verificar conexão com o banco de dados
     const dbConnected = await testDatabaseConnection();
@@ -197,7 +175,6 @@ app.get('/api/statistics/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Erro na verificação do serviço de estatísticas:', error);
     res.status(500).json({
       status: 'error',
       error: error instanceof Error ? error.message : 'Erro desconhecido',
@@ -216,33 +193,25 @@ app.use(errorHandler);
 const startServer = async () => {
   try {
     // Garantir que o diretório de dados existe
-    console.log(chalk.blue('🔍 Verificando diretório de dados...'));
     ensureDataDirectoryExists();
     
     // Verificar e inicializar banco de dados
-    console.log(chalk.blue('🔍 Verificando banco de dados...'));
     const dbExists = await checkAndInitializeDatabase();
     
     if (dbExists) {
       // Verificar se as tabelas existem
-      console.log(chalk.blue('🔍 Verificando tabelas do banco de dados...'));
       await checkTablesExist();
       
       // Verificar status do banco
-      console.log(chalk.blue('🔍 Verificando status do banco de dados...'));
       await checkDatabaseStatus();
       
       // Garantir que exista um usuário administrador
-      console.log(chalk.blue('🔍 Verificando usuário administrador...'));
       await ensureAdminUserExists();
     }
     
     app.listen(port, () => {
-      console.log(chalk.cyan(`Server running on port ${chalk.yellow(port)} in ${chalk.yellow(process.env.NODE_ENV || 'development')} mode`));
-      console.log(chalk.cyan(`API Documentation available at ${chalk.yellow(`http://localhost:${port}/api-docs`)}`));
     });
   } catch (error) {
-    console.error(chalk.red('❌ Erro ao iniciar o servidor:'), error);
     process.exit(1);
   }
 };

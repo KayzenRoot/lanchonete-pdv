@@ -1,10 +1,18 @@
 /**
  * Category routes for the PDV API
  */
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma';
+import { authenticate, authorize } from '../middleware/auth';
+import { CategoryCreateSchema, CategoryUpdateSchema } from '../schemas/categorySchema';
+import { z } from 'zod';
+import { Prisma } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
-const router = express.Router();
+const router = Router();
+
+// Middleware for authentication and authorization
+router.use(authenticate); // Authenticate all routes
 
 /**
  * @swagger
@@ -44,62 +52,46 @@ const router = express.Router();
  * @swagger
  * /api/categories:
  *   get:
- *     summary: Returns a list of all categories
+ *     summary: Get all categories
  *     tags: [Categories]
  *     responses:
  *       200:
- *         description: The list of categories
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Category'
+ *         description: List of categories
  */
-// @ts-ignore - Type checking error with Express Router
-router.get('/', async (req, res) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    // Verificar se estamos em modo de simulação
-    if (process.env.MOCK_DATABASE === 'true') {
-      // Dados mockados para teste
-      console.log('Usando modo de simulação para listar categorias');
-      const mockCategories = [
-        {
-          id: 'mock-cafeteria',
-          name: 'Cafeteria',
-          description: 'Cafés, cappuccinos e outras bebidas quentes',
-          color: '#795548',
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: 'mock-lanches',
-          name: 'Lanches',
-          description: 'Todos os tipos de sanduíches',
-          color: '#FF5733',
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: 'mock-bebidas',
-          name: 'Bebidas',
-          description: 'Refrigerantes, sucos e outras bebidas',
-          color: '#3498DB',
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }
-      ];
-      return res.json(mockCategories);
-    }
-
-    const categories = await prisma.category.findMany();
+    const categories = await prisma.category.findMany({
+      where: { active: true },
+      orderBy: { name: 'asc' },
+    });
     res.json(categories);
   } catch (error) {
-    console.error('Error fetching categories:', error);
     res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/categories/all:
+ *   get:
+ *     summary: Get all categories including inactive (Admin only)
+ *     tags: [Categories, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of all categories
+ *       403:
+ *         description: Admin access required
+ */
+router.get('/all', authorize(['ADMIN']), async (req: Request, res: Response) => {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: { name: 'asc' },
+    });
+    res.json(categories);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch all categories' });
   }
 });
 
@@ -112,49 +104,27 @@ router.get('/', async (req, res) => {
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The category ID
+ *         description: Category ID
  *     responses:
  *       200:
- *         description: The category data
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Category'
+ *         description: Category details
  *       404:
  *         description: Category not found
  */
-// @ts-ignore - Type checking error with Express Router
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const category = await prisma.category.findUnique({
       where: { id },
-      include: {
-        _count: {
-          select: {
-            products: true,
-          },
-        },
-      },
     });
-
-    if (!category) {
+    if (!category || (!category.active && req.user?.role !== 'ADMIN')) {
       return res.status(404).json({ error: 'Category not found' });
     }
-
-    // Transform data to include product count
-    const formattedCategory = {
-      ...category,
-      productsCount: category._count.products,
-      _count: undefined,
-    };
-
-    res.json(formattedCategory);
+    res.json(category);
   } catch (error) {
-    console.error('Error fetching category:', error);
     res.status(500).json({ error: 'Failed to fetch category' });
   }
 });
@@ -163,89 +133,36 @@ router.get('/:id', async (req, res) => {
  * @swagger
  * /api/categories:
  *   post:
- *     summary: Create a new category
- *     tags: [Categories]
+ *     summary: Create a new category (Admin only)
+ *     tags: [Categories, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - name
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               color:
- *                 type: string
- *               active:
- *                 type: boolean
+ *             $ref: '#/components/schemas/CategoryInput'
  *     responses:
  *       201:
- *         description: The created category
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Category'
+ *         description: Category created successfully
  *       400:
- *         description: Invalid request data
+ *         description: Invalid input
+ *       403:
+ *         description: Admin access required
  */
-// @ts-ignore - Type checking error with Express Router
-router.post('/', async (req, res) => {
+router.post('/', authorize(['ADMIN', 'MANAGER']), async (req: Request, res: Response) => {
   try {
-    const { name, description, color, active } = req.body;
-    console.log('Criando categoria com:', { name, description, color, active });
-
-    // Validação básica
-    if (!name || typeof name !== 'string') {
-      return res.status(400).json({ 
-        error: 'Nome é obrigatório e deve ser uma string' 
-      });
-    }
-
-    // Verificar se estamos em modo de simulação
-    if (process.env.MOCK_DATABASE === 'true') {
-      // Simular a criação retornando dados mockados
-      console.log('Usando modo de simulação para criar categoria');
-      const mockCategory = {
-        id: 'mock-' + Math.random().toString(36).substring(2, 9),
-        name,
-        description: description || null,
-        color: color || null,
-        active: active === undefined ? true : Boolean(active),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      console.log('Categoria simulada criada:', mockCategory);
-      return res.status(201).json(mockCategory);
-    }
-
-    // Usando try/catch separado para isolar erros do Prisma
-    try {
-      // Banco de dados real
-      const newCategory = await prisma.category.create({
-        data: {
-          name,
-          description: description || null,
-          color: color || null, 
-          active: active === undefined ? true : Boolean(active)
-        }
-      });
-      
-      console.log('Categoria criada com sucesso:', newCategory);
-      return res.status(201).json(newCategory);
-    } catch (dbError) {
-      console.error('Erro específico do banco de dados:', dbError);
-      throw new Error('Falha ao persistir no banco de dados');
-    }
-  } catch (error) {
-    console.error('Erro detalhado ao criar categoria:', error);
-    return res.status(500).json({ 
-      error: 'Failed to create category',
-      details: process.env.NODE_ENV === 'development' ? String(error) : undefined
+    const { name, description } = CategoryCreateSchema.parse(req.body);
+    const newCategory = await prisma.category.create({
+      data: { name, description },
     });
+    res.status(201).json(newCategory);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    res.status(500).json({ error: 'Failed to create category' });
   }
 });
 
@@ -253,69 +170,49 @@ router.post('/', async (req, res) => {
  * @swagger
  * /api/categories/{id}:
  *   put:
- *     summary: Update a category
- *     tags: [Categories]
+ *     summary: Update a category (Admin only)
+ *     tags: [Categories, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The category ID
+ *         description: Category ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               color:
- *                 type: string
- *               active:
- *                 type: boolean
+ *             $ref: '#/components/schemas/CategoryInput'
  *     responses:
  *       200:
- *         description: The updated category
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Category'
+ *         description: Category updated successfully
+ *       400:
+ *         description: Invalid input
+ *       403:
+ *         description: Admin access required
  *       404:
  *         description: Category not found
  */
-// @ts-ignore - Type checking error with Express Router
-router.put('/:id', async (req, res) => {
+router.put('/:id', authorize(['ADMIN', 'MANAGER']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, description, color, active } = req.body;
-
-    // Check if category exists
-    const existingCategory = await prisma.category.findUnique({
-      where: { id },
-    });
-
-    if (!existingCategory) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
-    // Update the category
+    const { name, description } = CategoryUpdateSchema.parse(req.body);
     const updatedCategory = await prisma.category.update({
       where: { id },
-      data: {
-        name: name !== undefined ? name : existingCategory.name,
-        description,
-        color,
-        active: active !== undefined ? active : existingCategory.active,
-      },
+      data: { name, description },
     });
-
     res.json(updatedCategory);
   } catch (error) {
-    console.error('Error updating category:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
+      return res.status(404).json({ error: 'Category not found' });
+    }
     res.status(500).json({ error: 'Failed to update category' });
   }
 });
@@ -324,126 +221,43 @@ router.put('/:id', async (req, res) => {
  * @swagger
  * /api/categories/{id}:
  *   delete:
- *     summary: Delete a category
- *     tags: [Categories]
+ *     summary: Delete a category (Admin only)
+ *     tags: [Categories, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The category ID
- *       - in: query
- *         name: force
- *         schema:
- *           type: boolean
- *         required: false
- *         description: Force delete even if category has products (products will be moved to 'Uncategorized')
- *       - in: query
- *         name: deleteProducts
- *         schema:
- *           type: boolean
- *         required: false
- *         description: Delete all products associated with this category
+ *         description: Category ID
  *     responses:
  *       200:
  *         description: Category deleted successfully
+ *       400:
+ *         description: Cannot delete category with associated products
+ *       403:
+ *         description: Admin access required
  *       404:
  *         description: Category not found
- *       400:
- *         description: Cannot delete category with products
  */
-// @ts-ignore - Type checking error with Express Router
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const force = req.query.force === 'true';
-    const deleteProducts = req.query.deleteProducts === 'true';
 
-    // Check if category exists
-    const existingCategory = await prisma.category.findUnique({
-      where: { id },
-    });
+    // Check if category has products associated
+    const productCount = await prisma.product.count({ where: { categoryId: id } });
+    if (productCount > 0) {
+      return res.status(400).json({ error: 'Cannot delete category with associated products' });
+    }
 
-    if (!existingCategory) {
+    await prisma.category.delete({ where: { id } });
+    res.json({ message: 'Category deleted successfully' });
+  } catch (error) {
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
       return res.status(404).json({ error: 'Category not found' });
     }
-    
-    // Verificar se existem produtos associados
-    const productsCount = await prisma.product.count({
-      where: { categoryId: id }
-    });
-    
-    // Se tem produtos e não está forçando a exclusão nem deletando produtos
-    if (productsCount > 0 && !force && !deleteProducts) {
-      return res.status(400).json({
-        error: 'Cannot delete category that has associated products.',
-        productsCount,
-        solutions: [
-          'Delete products first',
-          'Use ?force=true to move products to Uncategorized category',
-          'Use ?deleteProducts=true to delete all associated products'
-        ]
-      });
-    }
-
-    // Se tiver produtos e deleteProducts for true, excluir produtos primeiro
-    if (productsCount > 0 && deleteProducts) {
-      await prisma.product.deleteMany({
-        where: { categoryId: id }
-      });
-      console.log(`Deleted ${productsCount} products from category ${id}`);
-    }
-    
-    // Se tiver produtos e force for true, mover produtos para "Sem categoria"
-    if (productsCount > 0 && force) {
-      // Verificar se já existe ou criar categoria "Sem categoria"
-      let uncategorizedCategory = await prisma.category.findFirst({
-        where: { 
-          OR: [
-            { name: 'Sem categoria' },
-            { name: 'Uncategorized' }
-          ]
-        }
-      });
-      
-      if (!uncategorizedCategory) {
-        uncategorizedCategory = await prisma.category.create({
-          data: {
-            name: 'Sem categoria',
-            description: 'Produtos sem categoria definida',
-            color: '#CCCCCC',
-            active: true
-          }
-        });
-        console.log('Created Uncategorized category:', uncategorizedCategory);
-      }
-      
-      // Mover produtos para a categoria "Sem categoria"
-      await prisma.product.updateMany({
-        where: { categoryId: id },
-        data: { categoryId: uncategorizedCategory.id }
-      });
-      
-      console.log(`Moved ${productsCount} products to Uncategorized category`);
-    }
-
-    // Agora podemos excluir a categoria com segurança
-    await prisma.category.delete({
-      where: { id },
-    });
-
-    res.json({ 
-      success: true, 
-      message: 'Category deleted successfully',
-      details: productsCount > 0 ? (
-        deleteProducts 
-          ? `Deleted ${productsCount} associated products` 
-          : `Moved ${productsCount} products to Uncategorized category`
-      ) : undefined
-    });
-  } catch (error) {
-    console.error('Error deleting category:', error);
     res.status(500).json({ error: 'Failed to delete category' });
   }
 });

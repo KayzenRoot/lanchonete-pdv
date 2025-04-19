@@ -1,10 +1,19 @@
 /**
  * Product routes for the PDV API
  */
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma';
+import { authenticate, authorize } from '../middleware/auth';
+import { Prisma } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/library';
+import { ProductCreateSchema, ProductUpdateSchema } from '../schemas/productSchema';
+import { z } from 'zod';
 
-const router = express.Router();
+const router = Router();
+
+// Middleware
+router.use(authenticate); // Apply authentication to all product routes
 
 /**
  * @swagger
@@ -53,31 +62,60 @@ const router = express.Router();
  * @swagger
  * /api/products:
  *   get:
- *     summary: Returns all products
+ *     summary: Get all products with optional filtering and pagination
  *     tags: [Products]
+ *     parameters:
+ *       - in: query
+ *         name: categoryId
+ *         schema:
+ *           type: string
+ *         description: Filter by category ID
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
  *     responses:
  *       200:
- *         description: The list of products
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Product'
+ *         description: List of products
  */
-router.get('/', async (req, res) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
+    const { categoryId, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const where: any = { isAvailable: true };
+    if (categoryId) {
+      where.categoryId = categoryId as string;
+    }
+
     const products = await prisma.product.findMany({
-      include: {
-        category: true,
-      },
-      orderBy: {
-        name: 'asc',
+      where,
+      skip,
+      take: limitNum,
+      include: { category: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const totalProducts = await prisma.product.count({ where });
+
+    res.json({
+      data: products,
+      pagination: {
+        totalItems: totalProducts,
+        totalPages: Math.ceil(totalProducts / limitNum),
+        currentPage: pageNum,
+        pageSize: limitNum,
       },
     });
-    res.json(products);
   } catch (error) {
-    console.error('Error fetching products:', error);
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
@@ -91,38 +129,28 @@ router.get('/', async (req, res) => {
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The product ID
+ *         description: Product ID
  *     responses:
  *       200:
- *         description: The product data
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Product'
+ *         description: Product details
  *       404:
  *         description: Product not found
  */
-// @ts-ignore - Type checking error with Express Router
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const product = await prisma.product.findUnique({
       where: { id },
-      include: {
-        category: true,
-      },
+      include: { category: true },
     });
-
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
-
     res.json(product);
   } catch (error) {
-    console.error('Error fetching product:', error);
     res.status(500).json({ error: 'Failed to fetch product' });
   }
 });
@@ -131,82 +159,42 @@ router.get('/:id', async (req, res) => {
  * @swagger
  * /api/products:
  *   post:
- *     summary: Create a new product
- *     tags: [Products]
+ *     summary: Create a new product (Admin only)
+ *     tags: [Products, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - name
- *               - price
- *               - categoryId
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               price:
- *                 type: number
- *                 format: float
- *               imageUrl:
- *                 type: string
- *               categoryId:
- *                 type: string
- *               isAvailable:
- *                 type: boolean
+ *             $ref: '#/components/schemas/ProductInput'
  *     responses:
  *       201:
- *         description: The created product
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Product'
+ *         description: Product created successfully
  *       400:
- *         description: Invalid request data
- *       404:
- *         description: Category not found
+ *         description: Invalid input
+ *       403:
+ *         description: Admin access required
  */
-// @ts-ignore - Type checking error with Express Router
-router.post('/', async (req, res) => {
+router.post('/', authorize(['ADMIN', 'MANAGER']), async (req: Request, res: Response) => {
   try {
-    const { name, description, price, imageUrl, categoryId, isAvailable } = req.body;
-
-    // Validate required fields
-    if (!name || price === undefined || !categoryId) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: name, price and categoryId are required' 
-      });
-    }
-
-    // Check if category exists
-    const categoryExists = await prisma.category.findUnique({
-      where: { id: categoryId },
-    });
-
-    if (!categoryExists) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
+    const { name, description, price, categoryId, isAvailable } = ProductCreateSchema.parse(req.body);
     const newProduct = await prisma.product.create({
       data: {
         name,
         description,
-        price: parseFloat(price.toString()),
-        imageUrl,
+        price: new Decimal(price),
         categoryId,
-        isAvailable: isAvailable !== undefined ? isAvailable : true,
+        isAvailable,
       },
-      include: {
-        category: true,
-      },
+      include: { category: true },
     });
-
     res.status(201).json(newProduct);
   } catch (error) {
-    console.error('Error creating product:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
     res.status(500).json({ error: 'Failed to create product' });
   }
 });
@@ -215,90 +203,57 @@ router.post('/', async (req, res) => {
  * @swagger
  * /api/products/{id}:
  *   put:
- *     summary: Update a product
- *     tags: [Products]
+ *     summary: Update a product (Admin only)
+ *     tags: [Products, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The product ID
+ *         description: Product ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               price:
- *                 type: number
- *                 format: float
- *               imageUrl:
- *                 type: string
- *               categoryId:
- *                 type: string
- *               isAvailable:
- *                 type: boolean
+ *             $ref: '#/components/schemas/ProductInput'
  *     responses:
  *       200:
- *         description: The updated product
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Product'
+ *         description: Product updated successfully
+ *       400:
+ *         description: Invalid input
+ *       403:
+ *         description: Admin access required
  *       404:
- *         description: Product or category not found
+ *         description: Product not found
  */
-// @ts-ignore - Type checking error with Express Router
-router.put('/:id', async (req, res) => {
+router.put('/:id', authorize(['ADMIN', 'MANAGER']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, description, price, imageUrl, categoryId, isAvailable } = req.body;
+    const updateData = ProductUpdateSchema.parse(req.body);
 
-    // Check if product exists
-    const existingProduct = await prisma.product.findUnique({
-      where: { id },
-    });
-
-    if (!existingProduct) {
-      return res.status(404).json({ error: 'Product not found' });
+    // Handle price conversion if present
+    const dataToUpdate: any = { ...updateData };
+    if (updateData.price !== undefined) {
+      dataToUpdate.price = new Decimal(updateData.price);
     }
 
-    // If categoryId is provided, check if it exists
-    if (categoryId && categoryId !== existingProduct.categoryId) {
-      const categoryExists = await prisma.category.findUnique({
-        where: { id: categoryId },
-      });
-
-      if (!categoryExists) {
-        return res.status(404).json({ error: 'Category not found' });
-      }
-    }
-
-    // Update the product
     const updatedProduct = await prisma.product.update({
       where: { id },
-      data: {
-        name: name !== undefined ? name : existingProduct.name,
-        description: description !== undefined ? description : existingProduct.description,
-        price: price !== undefined ? parseFloat(price.toString()) : existingProduct.price,
-        imageUrl: imageUrl !== undefined ? imageUrl : existingProduct.imageUrl,
-        categoryId: categoryId !== undefined ? categoryId : existingProduct.categoryId,
-        isAvailable: isAvailable !== undefined ? isAvailable : existingProduct.isAvailable,
-      },
-      include: {
-        category: true,
-      },
+      data: dataToUpdate,
+      include: { category: true },
     });
-
     res.json(updatedProduct);
   } catch (error) {
-    console.error('Error updating product:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
+      return res.status(404).json({ error: 'Product not found' });
+    }
     res.status(500).json({ error: 'Failed to update product' });
   }
 });
@@ -307,53 +262,34 @@ router.put('/:id', async (req, res) => {
  * @swagger
  * /api/products/{id}:
  *   delete:
- *     summary: Delete a product
- *     tags: [Products]
+ *     summary: Delete a product (Admin only)
+ *     tags: [Products, Admin]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The product ID
+ *         description: Product ID
  *     responses:
  *       200:
  *         description: Product deleted successfully
+ *       403:
+ *         description: Admin access required
  *       404:
  *         description: Product not found
- *       400:
- *         description: Cannot delete product with order items
  */
-// @ts-ignore - Type checking error with Express Router
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-
-    // Check if product exists
-    const existingProduct = await prisma.product.findUnique({
-      where: { id },
-      include: { orderItems: true },
-    });
-
-    if (!existingProduct) {
+    await prisma.product.delete({ where: { id } });
+    res.json({ message: 'Product deleted successfully' });
+  } catch (error) {
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
       return res.status(404).json({ error: 'Product not found' });
     }
-
-    // Check if the product is used in any orders
-    if (existingProduct.orderItems.length > 0) {
-      return res.status(400).json({
-        error: 'Cannot delete product that is used in orders.',
-      });
-    }
-
-    // Delete the product
-    await prisma.product.delete({
-      where: { id },
-    });
-
-    res.json({ success: true, message: 'Product deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting product:', error);
     res.status(500).json({ error: 'Failed to delete product' });
   }
 });

@@ -2,46 +2,41 @@
  * Utility to ensure an admin user exists in the database
  */
 import prisma from './prisma';
-import chalk from 'chalk';
 import bcrypt from 'bcrypt';
+import chalk from 'chalk';
 
 /**
- * Creates an admin user if no users exist in the database
+ * Ensures that at least one admin user exists in the database.
+ * If no admin exists, creates a default admin user.
  */
-export async function ensureAdminUserExists(): Promise<void> {
+export async function ensureAdminUserExists() {
   try {
-    console.log(chalk.blue('🔍 Verificando existência de usuários no sistema...'));
-    
-    // Check if any users exist
-    const userCount = await prisma.user.count();
-    
-    if (userCount === 0) {
-      console.log(chalk.yellow('⚠️ Nenhum usuário encontrado. Criando usuário administrador padrão...'));
-      
-      // Dados consistentes para o usuário administrador
-      const adminEmail = 'admin@exemplo.com';
-      const adminPassword = 'admin123';
-      
-      // Create default admin
-      const passwordHash = await bcrypt.hash(adminPassword, 10);
-      
+    // Check if any admin user exists
+    const adminCount = await prisma.user.count({
+      where: { role: 'ADMIN' },
+    });
+
+    if (adminCount === 0) {
+      // No admin found, create a default one
+      const defaultAdminPassword = 'admin123';
+      const hashedPassword = await bcrypt.hash(defaultAdminPassword, 10);
+
       await prisma.user.create({
         data: {
-          name: 'Administrador',
-          email: adminEmail,
-          password: passwordHash,
-          role: 'ADMIN'
-        }
+          email: 'admin@lanchonete.com',
+          password: hashedPassword,
+          name: 'Admin Principal',
+          role: 'ADMIN',
+          active: true,
+        },
       });
-      
-      console.log(chalk.green('✅ Usuário administrador criado com sucesso!'));
-      console.log(chalk.blue(`📝 Login: ${adminEmail}`));
-      console.log(chalk.blue(`🔑 Senha: ${adminPassword}`));
     } else {
-      console.log(chalk.green(`✅ Sistema possui ${userCount} usuários cadastrados.`));
+      // Removed console.log
     }
   } catch (error) {
-    console.error(chalk.red('❌ Erro ao verificar/criar usuário administrador:'), error);
+    // Removed console.error
+    // Removed console.error
+    // Removed console.error
   }
 }
 

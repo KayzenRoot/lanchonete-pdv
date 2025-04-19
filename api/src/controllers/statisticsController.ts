@@ -34,8 +34,7 @@ export async function getOrdersByDateRange(
           include: {
             product: true
           }
-        },
-        payments: true
+        }
       }
     });
     
@@ -143,24 +142,22 @@ export function formatPaymentMethods(orders: any[]) {
     // Group payments by method
     const paymentMap = new Map();
     
-    // Process each order's payments
+    // Process each order's payments (Using order.paymentMethod directly)
     orders.forEach(order => {
-      order.payments.forEach((payment: any) => {
-        const method = payment.method;
-        const amount = Number(payment.amount);
-        
-        if (!paymentMap.has(method)) {
-          paymentMap.set(method, {
-            method,
-            count: 0,
-            amount: 0
-          });
-        }
-        
-        const paymentData = paymentMap.get(method);
-        paymentData.count += 1;
-        paymentData.amount += amount;
-      });
+      const method = order.paymentMethod; // Accessing paymentMethod directly
+      const amount = Number(order.total); // Assuming total reflects payment amount here
+      
+      if (!paymentMap.has(method)) {
+        paymentMap.set(method, {
+          method,
+          count: 0,
+          amount: 0
+        });
+      }
+      
+      const paymentData = paymentMap.get(method);
+      paymentData.count += 1;
+      paymentData.amount += amount;
     });
     
     // Calculate percentages and format for frontend

@@ -1,6 +1,5 @@
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma';
-import { authenticateToken, checkAdminRole } from '../middleware/authMiddleware';
 import { authenticate, authorize } from '../middleware/auth';
 import {
   getGeneralSettings,
@@ -14,7 +13,7 @@ import {
   deletePrinter
 } from '../controllers/settingsController';
 
-const router = express.Router();
+const router = Router();
 
 /**
  * @swagger
@@ -32,7 +31,7 @@ const router = express.Router();
  *       500:
  *         description: Server error
  */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
     // Get the first settings record or create default if none exists
     let settings = await prisma.storeSettings.findFirst();
@@ -95,7 +94,7 @@ router.get('/', authenticateToken, async (req, res) => {
  *       500:
  *         description: Server error
  */
-router.put('/', authenticateToken, checkAdminRole, async (req, res) => {
+router.put('/', authenticate, authorize(['ADMIN']), async (req, res) => {
   try {
     const {
       storeName,
@@ -162,7 +161,7 @@ router.put('/', authenticateToken, checkAdminRole, async (req, res) => {
  *       500:
  *         description: Server error
  */
-router.post('/reset', authenticateToken, checkAdminRole, async (req, res) => {
+router.post('/reset', authenticate, authorize(['ADMIN']), async (req, res) => {
   try {
     // Get the first settings record
     const settings = await prisma.storeSettings.findFirst();

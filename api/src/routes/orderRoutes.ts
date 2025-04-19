@@ -1,11 +1,28 @@
 /**
  * Order routes for the PDV API
  */
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { generateOrderNumber } from '../utils/orderUtils';
+import { authenticate, authorize } from '../middleware/auth';
+import { z } from 'zod';
+import { Prisma } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/library';
+import { 
+  OrderCreateSchema, 
+  OrderUpdateSchema, 
+  OrderUpdateStatusSchema 
+} from '../schemas/orderSchema';
+import {
+  calculateOrderTotal,
+  processOrderItems,
+} from '../utils/orderUtils';
 
-const router = express.Router();
+const router = Router();
+
+// Middleware for authentication
+router.use(authenticate);
 
 /**
  * @swagger
@@ -89,86 +106,76 @@ const router = express.Router();
  * @swagger
  * /api/orders:
  *   get:
- *     summary: Get all orders
+ *     summary: Get all orders with filtering and pagination
  *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: status
  *         schema:
  *           type: string
- *           enum: [PENDING, PREPARING, READY, DELIVERED, CANCELLED]
- *         description: Filter orders by status
+ *         description: Filter by order status
  *       - in: query
- *         name: startDate
+ *         name: userId
  *         schema:
  *           type: string
- *           format: date
- *         description: Filter orders created after this date
+ *         description: Filter by user ID (Admin only)
  *       - in: query
- *         name: endDate
+ *         name: page
  *         schema:
- *           type: string
- *           format: date
- *         description: Filter orders created before this date
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Items per page
  *     responses:
  *       200:
- *         description: The list of orders
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Order'
+ *         description: List of orders
  */
-// @ts-ignore - Type checking error with Express Router
-router.get('/', async (req, res) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const { status, startDate, endDate } = req.query;
-    
-    // Build filters
-    const filters: any = {};
-    
+    const { status, userId, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const where: any = {};
     if (status) {
-      filters.status = status;
+      where.status = status as string;
     }
-    
-    if (startDate || endDate) {
-      filters.createdAt = {};
-      
-      if (startDate) {
-        filters.createdAt.gte = new Date(startDate as string);
-      }
-      
-      if (endDate) {
-        filters.createdAt.lte = new Date(endDate as string);
-      }
+    // Admin can filter by user, others see only their own orders
+    if (req.user?.role === 'ADMIN' && userId) {
+      where.userId = userId as string;
+    } else if (req.user?.role !== 'ADMIN') {
+      where.userId = req.user?.id;
     }
-    
+
     const orders = await prisma.order.findMany({
-      where: filters,
+      where,
+      skip,
+      take: limitNum,
       include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
+        user: { select: { id: true, name: true } },
+        items: { include: { product: { select: { id: true, name: true } } } },
       },
-      orderBy: {
-        createdAt: 'desc',
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalOrders = await prisma.order.count({ where });
+
+    res.json({
+      data: orders,
+      pagination: {
+        totalItems: totalOrders,
+        totalPages: Math.ceil(totalOrders / limitNum),
+        currentPage: pageNum,
+        pageSize: limitNum,
       },
     });
-    
-    res.json(orders);
   } catch (error) {
-    console.error('Error fetching orders:', error);
     res.status(500).json({ error: 'Failed to fetch orders' });
   }
 });
@@ -179,54 +186,46 @@ router.get('/', async (req, res) => {
  *   get:
  *     summary: Get an order by ID
  *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The order ID
+ *         description: Order ID
  *     responses:
  *       200:
- *         description: The order data
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
+ *         description: Order details
+ *       403:
+ *         description: Not authorized to view this order
  *       404:
  *         description: Order not found
  */
-// @ts-ignore - Type checking error with Express Router
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
     const order = await prisma.order.findUnique({
       where: { id },
       include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
+        user: { select: { id: true, name: true, email: true } },
+        items: { include: { product: true } },
+        comments: { orderBy: { createdAt: 'asc' } },
       },
     });
-    
+
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
-    
+
+    // Check authorization: User can see their own order, Admin can see any
+    if (req.user?.role !== 'ADMIN' && order.userId !== req.user?.id) {
+      return res.status(403).json({ error: 'Not authorized to view this order' });
+    }
+
     res.json(order);
   } catch (error) {
-    console.error('Error fetching order:', error);
     res.status(500).json({ error: 'Failed to fetch order' });
   }
 });
@@ -237,343 +236,223 @@ router.get('/:id', async (req, res) => {
  *   post:
  *     summary: Create a new order
  *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - userId
- *               - items
- *               - paymentMethod
- *             properties:
- *               userId:
- *                 type: string
- *               customerName:
- *                 type: string
- *               items:
- *                 type: array
- *                 items:
- *                   type: object
- *                   required:
- *                     - productId
- *                     - quantity
- *                   properties:
- *                     productId:
- *                       type: string
- *                     quantity:
- *                       type: integer
- *                     note:
- *                       type: string
- *               paymentMethod:
- *                 type: string
- *                 enum: [CASH, CREDIT_CARD, DEBIT_CARD, PIX]
+ *             $ref: '#/components/schemas/OrderCreateInput'
  *     responses:
  *       201:
- *         description: The created order
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
+ *         description: Order created successfully
  *       400:
- *         description: Invalid request data
- *       404:
- *         description: Product not found
+ *         description: Invalid input or product not available/found
  */
-// @ts-ignore - Type checking error with Express Router
-router.post('/', async (req, res) => {
+router.post('/', async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ error: 'User not authenticated' });
+  }
+
   try {
-    const { userId, customerName, items, paymentMethod } = req.body;
-    
-    console.log('📦 Recebendo requisição para criar pedido:', {
-      userId,
-      customerName,
-      items: items?.length,
-      paymentMethod
-    });
-    
-    // Validate required fields
-    if (!userId || !items || items.length === 0 || !paymentMethod) {
-      console.log('❌ Campos obrigatórios ausentes:', {
-        userId: !!userId,
-        items: items ? `Array com ${items.length} itens` : 'undefined',
-        paymentMethod: !!paymentMethod
-      });
-      
-      return res.status(400).json({ 
-        error: 'Missing required fields: userId, items and paymentMethod are required' 
-      });
+    const orderInput = OrderCreateSchema.parse(req.body);
+
+    // 1. Process items and calculate total
+    const { processedItems, totalAmount, productErrors } = await processOrderItems(orderInput.items);
+    if (productErrors.length > 0) {
+      return res.status(400).json({ error: 'Invalid product data', details: productErrors });
     }
-    
-    // Verificar se o usuário existe ou criar um temporário para desenvolvimento
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true }
-      });
-      
-      if (!user) {
-        console.log(`⚠️ Usuário com ID ${userId} não encontrado. Verificando ambiente...`);
-        
-        // Em ambiente não-produção, criar usuário para facilitar desenvolvimento
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('🔧 Tentando criar usuário temporário...');
-          try {
-            await prisma.user.create({
-              data: {
-                id: userId,
-                name: 'Usuário Temporário',
-                email: `temp_${userId}@exemplo.com`,
-                role: 'USER',
-                password: 'temp_password'
-              }
-            });
-            console.log(`✅ Usuário temporário criado com ID ${userId}`);
-          } catch (createUserError) {
-            console.log('⚠️ Não foi possível criar usuário temporário, mas continuando...');
-          }
-        }
-      } else {
-        console.log(`✅ Usuário verificado: ${userId}`);
-      }
-    } catch (userError) {
-      console.error('❌ Erro ao verificar usuário:', userError);
-      // Continuamos mesmo com erro para ambiente de desenvolvimento
-    }
-    
-    // Get products for all items
-    const productIds = items.map((item: any) => item.productId);
-    
-    console.log('🔍 Buscando produtos com IDs:', productIds);
-    
-    const products = await prisma.product.findMany({
-      where: {
-        id: { in: productIds },
-      },
-    });
-    
-    console.log(`📊 Encontrados ${products.length} produtos de ${productIds.length} solicitados`);
-    
-    // Check if products exist and create missing ones in development
-    if (products.length !== productIds.length) {
-      const foundIds = products.map(p => p.id);
-      const missingIds = productIds.filter((id: string) => !foundIds.includes(id));
-      
-      console.log('⚠️ Produtos não encontrados:', missingIds);
-      
-      // Em ambiente não-produção, criar produtos ausentes
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('🔧 Criando produtos ausentes para desenvolvimento...');
-        
-        // Primeiro, verificar se existe ou criar uma categoria padrão
-        let defaultCategoryId: string;
-        try {
-          const defaultCategory = await prisma.category.findFirst({
-            where: {
-              name: 'Temporários'
-            }
-          });
-          
-          if (defaultCategory) {
-            defaultCategoryId = defaultCategory.id;
-            console.log('✅ Usando categoria existente para produtos temporários:', defaultCategoryId);
-          } else {
-            const newCategory = await prisma.category.create({
-              data: {
-                name: 'Temporários',
-                description: 'Categoria para produtos temporários',
-                color: '#CCCCCC',
-                active: true
-              }
-            });
-            defaultCategoryId = newCategory.id;
-            console.log('✅ Categoria temporária criada com ID:', defaultCategoryId);
-          }
-          
-          // Agora criar os produtos faltantes com a categoria padrão
-          for (const missingId of missingIds) {
-            try {
-              const newProduct = await prisma.product.create({
-                data: {
-                  id: missingId,
-                  name: `Produto Temporário ${missingId}`,
-                  description: 'Produto criado automaticamente',
-                  price: 10.0,
-                  isAvailable: true,
-                  categoryId: defaultCategoryId
-                }
-              });
-              products.push(newProduct);
-              console.log(`✅ Produto temporário criado: ${missingId}`);
-            } catch (createProductError) {
-              console.error(`❌ Erro ao criar produto ${missingId}:`, createProductError);
-            }
-          }
-        } catch (categoryError) {
-          console.error('❌ Erro ao verificar/criar categoria padrão:', categoryError);
-        }
-      } else {
-        return res.status(404).json({ 
-          error: 'One or more products not found', 
-          missingProductIds: missingIds
-        });
-      }
-    }
-    
-    // Calculate order total and prepare order items
-    let total = 0;
-    const orderItems = items.map((item: any) => {
-      const product = products.find((p: any) => p.id === item.productId);
-      if (!product) {
-        throw new Error(`Product ${item.productId} not found`);
-      }
-      
-      const price = Number(product.price);
-      const quantity = Number(item.quantity) || 1; // Garantir que a quantidade seja numérica
-      const subtotal = price * quantity;
-      total += subtotal;
-      
-      return {
-        productId: item.productId,
-        quantity,
-        price,
-        subtotal,
-        note: item.note || null, // Aceitar nulo
-      };
-    });
-    
-    console.log(`💰 Total calculado: ${total}, ${orderItems.length} itens preparados`);
-    
-    // Generate order number
+
+    // 2. Generate unique order number
     const orderNumber = await generateOrderNumber();
-    console.log(`🔢 Número do pedido gerado: ${orderNumber}`);
-    
-    try {
-      // Create order with items
-      const order = await prisma.order.create({
+
+    // 3. Create order in a transaction
+    const newOrder = await prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.order.create({
         data: {
-          userId,
-          customerName: customerName || null,
           orderNumber,
-          paymentMethod,
-          total,
-          status: "PENDING",
+          status: orderInput.status || 'PENDING',
+          total: totalAmount,
+          userId: userId,
+          customerName: orderInput.customerName,
+          paymentMethod: orderInput.paymentMethod,
           items: {
-            create: orderItems,
+            create: processedItems.map(item => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price, // Price at the time of order
+              subtotal: item.subtotal,
+              note: item.note
+            })),
           },
         },
         include: {
-          items: {
-            include: {
-              product: true,
-            },
-          },
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-            },
-          },
-        },
-      });
-      
-      console.log(`✅ Pedido criado com sucesso. ID: ${order.id}, Número: ${order.orderNumber}`);
-      res.status(201).json(order);
-    } catch (createError: any) {
-      console.error('❌ Erro específico ao criar o pedido:', createError);
-      
-      // Trata erros de chave estrangeira (geralmente usuário não existe)
-      if (createError.message && createError.message.includes('Foreign key constraint failed')) {
-        console.log('🔄 Tentando resolver erro de chave estrangeira...');
-        
-        // Tentar criar o pedido com usuário padrão ID=1 se estiver em desenvolvimento
-        if (process.env.NODE_ENV !== 'production') {
-          try {
-            // Verificar se usuário 1 existe, se não, criar
-            const adminExists = await prisma.user.findUnique({
-              where: { id: '1' },
-            });
-            
-            if (!adminExists) {
-              await prisma.user.create({
-                data: {
-                  id: '1',
-                  name: 'Admin',
-                  email: 'admin@exemplo.com',
-                  role: 'ADMIN',
-                  password: 'senha_admin'
-                }
-              });
-              console.log('✅ Usuário admin criado automaticamente');
-            }
-            
-            // Tentar criar pedido com ID 1
-            const orderWithDefaultUser = await prisma.order.create({
-              data: {
-                userId: '1', // Usuário ID fixo
-                customerName: customerName || null,
-                orderNumber,
-                paymentMethod,
-                total,
-                status: "PENDING",
-                items: {
-                  create: orderItems,
-                },
-              },
-              include: {
-                items: {
-                  include: {
-                    product: true,
-                  },
-                },
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    role: true,
-                  },
-                },
-              },
-            });
-            
-            console.log(`✅ Pedido criado com usuário admin. ID: ${orderWithDefaultUser.id}`);
-            return res.status(201).json(orderWithDefaultUser);
-          } catch (fallbackError) {
-            console.error('❌ Falha na tentativa de criar com usuário padrão:', fallbackError);
-          }
+          user: { select: { id: true, name: true } },
+          items: { include: { product: { select: { id: true, name: true } } } }
         }
-        
-        return res.status(400).json({
-          error: 'Foreign key constraint failed. O usuário ou produto pode não existir.',
-          details: createError.message
-        });
-      }
-      
-      // Erro de chave única (número de pedido já existe)
-      if (createError.code === 'P2002') {
-        return res.status(400).json({
-          error: 'Erro de chave única. Talvez já exista um pedido com este número.',
-          details: createError.message
-        });
-      }
-      
-      return res.status(500).json({
-        error: 'Erro ao criar pedido',
-        message: createError.message
       });
-    }
-  } catch (error: any) {
-    const errorMessage = error.message || 'Unknown error';
-    console.error('❌ Erro geral ao criar pedido:', error);
-    console.error('🔍 Stack trace:', error.stack);
-    res.status(500).json({ 
-      error: 'Falha ao criar pedido',
-      message: errorMessage
+      // Potentially update stock levels here if implementing stock management
+      return createdOrder;
     });
+
+    res.status(201).json(newOrder);
+
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// Define a manual type that matches Order model structure for update operations
+// This avoids the issue with missing OrderUpdateInput type
+interface OrderUpdateData {
+  customerName?: string | null;
+  paymentMethod?: string;
+  status?: string;
+  total?: Decimal;
+  // Add other fields if needed based on your Order model
+}
+
+/**
+ * @swagger
+ * /api/orders/{id}:
+ *   put:
+ *     summary: Update an existing order (Admin or Manager only)
+ *     tags: [Orders, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/OrderUpdateInput'
+ *     responses:
+ *       200:
+ *         description: Order updated successfully
+ *       400:
+ *         description: Invalid input or product error
+ *       403:
+ *         description: Not authorized
+ *       404:
+ *         description: Order not found
+ */
+router.put('/:id', authorize(['ADMIN', 'MANAGER']), async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const orderInput = OrderUpdateSchema.partial().parse(req.body);
+
+    let processedItems: Array<{ productId: string; quantity: number; price: Decimal; subtotal: Decimal; note: string | null }> = [];
+    let totalAmount: Decimal | undefined = undefined; // Initialize as undefined
+    let productErrors: string[] = [];
+
+    // Find the existing order total if items are not being updated
+    let existingTotal: Decimal | null = null;
+    if (!orderInput.items || orderInput.items.length === 0) {
+       const existingOrder = await prisma.order.findUnique({ where: { id }, select: { total: true } });
+       if (!existingOrder) {
+         return res.status(404).json({ error: 'Order not found to get existing total' });
+       }
+       existingTotal = existingOrder.total;
+    }
+
+    // If items are provided, reprocess them and recalculate total
+    if (orderInput.items && orderInput.items.length > 0) {
+        const result = await processOrderItems(orderInput.items);
+        processedItems = result.processedItems;
+        totalAmount = result.totalAmount;
+        productErrors = result.productErrors;
+
+        if (productErrors.length > 0) {
+            return res.status(400).json({ error: 'Invalid product data', details: productErrors });
+        }
+    } else {
+        // If no items provided, use the existing total
+        totalAmount = existingTotal ?? new Decimal(0); // Fallback to 0 if somehow existingTotal is null
+    }
+
+    // Use our custom type instead of Prisma.OrderUpdateInput
+    const dataToUpdate: OrderUpdateData = {
+        customerName: orderInput.customerName,
+        paymentMethod: orderInput.paymentMethod,
+        status: orderInput.status,
+        total: totalAmount
+    };
+
+    // Remove undefined fields before sending to Prisma
+    Object.keys(dataToUpdate).forEach((key) => {
+      if (dataToUpdate[key as keyof OrderUpdateData] === undefined) {
+        delete dataToUpdate[key as keyof OrderUpdateData];
+      }
+    });
+
+    // Use transaction to update order and potentially items
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+        // Update order details
+        const orderUpdateResult = await tx.order.update({
+            where: { id },
+            data: dataToUpdate,
+            include: { 
+                user: { select: { id: true, name: true } },
+                items: { include: { product: { select: { id: true, name: true } } } }
+            }
+        });
+
+        // If items were provided, handle the update (delete old, create new)
+        if (orderInput.items && processedItems.length > 0) {
+            await tx.orderItem.deleteMany({ where: { orderId: id } });
+            await tx.orderItem.createMany({
+                data: processedItems.map(item => ({
+                    orderId: id,
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    price: item.price,
+                    subtotal: item.subtotal,
+                    note: item.note
+                }))
+            });
+            // Re-fetch the order *within the transaction* to include updated items
+             return await tx.order.findUnique({ 
+                where: { id },
+                include: { 
+                    user: { select: { id: true, name: true } },
+                    items: { include: { product: { select: { id: true, name: true } } } }
+                }
+            });
+        } else {
+            // If no items were updated, return the initial update result but refetch to include relations
+             return await tx.order.findUnique({ 
+                where: { id },
+                include: { 
+                    user: { select: { id: true, name: true } },
+                    items: { include: { product: { select: { id: true, name: true } } } }
+                }
+            });
+        }
+    });
+
+    res.json(updatedOrder);
+
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    res.status(500).json({ error: 'Failed to update order' });
   }
 });
 
@@ -583,166 +462,100 @@ router.post('/', async (req, res) => {
  *   patch:
  *     summary: Update order status
  *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
+ *         required: true
  *         schema:
  *           type: string
- *         required: true
- *         description: The order ID
+ *         description: Order ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - status
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [PENDING, PREPARING, READY, DELIVERED, CANCELLED]
- *     responses:
- *       200:
- *         description: The updated order
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       404:
- *         description: Order not found
- *       400:
- *         description: Invalid status
- *   put:
- *     summary: Update order status (alternative to PATCH)
- *     tags: [Orders]
- *     parameters:
- *       - in: path
- *         name: id
- *         schema:
- *           type: string
- *         required: true
- *         description: The order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
+ *                 enum: [PENDING, PREPARING, READY, COMPLETED, CANCELLED]
  *             required:
  *               - status
- *             properties:
- *               status:
- *                 type: string
- *                 enum: [PENDING, PREPARING, READY, DELIVERED, CANCELLED]
  *     responses:
  *       200:
- *         description: The updated order
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
+ *         description: Order status updated successfully
+ *       400:
+ *         description: Invalid status value
  *       404:
  *         description: Order not found
- *       400:
- *         description: Invalid status
  */
-// @ts-ignore - Type checking error with Express Router
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    
-    // Validate status
-    const validStatuses = ['PENDING', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED'];
-    if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
-    }
-    
-    // Check if order exists
-    const existingOrder = await prisma.order.findUnique({
-      where: { id },
-    });
-    
-    if (!existingOrder) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    
-    // Update order status
+    const { status } = OrderUpdateStatusSchema.parse(req.body);
+
     const updatedOrder = await prisma.order.update({
       where: { id },
       data: { status },
-      include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
-      },
+       include: {
+          user: { select: { id: true, name: true } },
+          items: { include: { product: { select: { id: true, name: true } } } }
+       }
     });
-    
     res.json(updatedOrder);
   } catch (error) {
-    console.error('Error updating order status:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+     if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
+      return res.status(404).json({ error: 'Order not found' });
+    }
     res.status(500).json({ error: 'Failed to update order status' });
   }
 });
 
-// Adicionar rota PUT que duplica a funcionalidade da rota PATCH
-// @ts-ignore - Type checking error with Express Router
-router.put('/:id/status', async (req, res) => {
+/**
+ * @swagger
+ * /api/orders/{id}:
+ *   delete:
+ *     summary: Delete an order (Admin only)
+ *     tags: [Orders, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order deleted successfully
+ *       403:
+ *         description: Admin access required
+ *       404:
+ *         description: Order not found
+ */
+router.delete('/:id', authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    
-    // Validate status
-    const validStatuses = ['PENDING', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED'];
-    if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
-    }
-    
-    // Check if order exists
-    const existingOrder = await prisma.order.findUnique({
-      where: { id },
+
+    // Use transaction to delete order items and comments first
+    await prisma.$transaction(async (tx) => {
+      await tx.orderItem.deleteMany({ where: { orderId: id } });
+      await tx.comment.deleteMany({ where: { orderId: id } });
+      await tx.order.delete({ where: { id } });
     });
-    
-    if (!existingOrder) {
+
+    res.json({ message: 'Order deleted successfully' });
+  } catch (error) {
+    if (error instanceof PrismaClientKnownRequestError && error.code === 'P2025') {
       return res.status(404).json({ error: 'Order not found' });
     }
-    
-    // Update order status
-    const updatedOrder = await prisma.order.update({
-      where: { id },
-      data: { status },
-      include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
-      },
-    });
-    
-    res.json(updatedOrder);
-  } catch (error) {
-    console.error('Error updating order status:', error);
-    res.status(500).json({ error: 'Failed to update order status' });
+    res.status(500).json({ error: 'Failed to delete order' });
   }
 });
 
@@ -838,7 +651,6 @@ router.get('/stats/daily', async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('Error fetching order statistics:', error);
     res.status(500).json({ error: 'Failed to fetch order statistics' });
   }
 });
@@ -934,7 +746,6 @@ router.get('/stats/products', async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('Error fetching product statistics:', error);
     res.status(500).json({ error: 'Failed to fetch product statistics' });
   }
 });
